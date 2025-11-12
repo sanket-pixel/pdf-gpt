@@ -453,6 +453,89 @@ Memory addresses must remain fixed; dynamic allocation inside capture is disallo
 
 In practice, frameworks combine CUDA Graphs with static-shape inference (e.g., TensorRT or compiled PyTorch models) to achieve ultra-low latency and stable performance for repetitive workloads.
 
+
+1. What is the difference between Nsight Systems and Nsight Compute?
+
+Answer:
+Nsight Systems gives a timeline view of the entire workload — showing kernel launches, data transfers, CPU↔GPU synchronization, and how different processes overlap.
+Nsight Compute is a kernel-level profiler — it analyzes one CUDA kernel in depth (occupancy, memory transactions, warp efficiency, instruction mix).
+
+2. How can you identify whether a model is CPU-bound or GPU-bound using PyTorch Profiler?
+
+Answer:
+Check the CUDA time percentage versus total CPU time in the profiler output.
+
+High CPU time with small CUDA utilization → CPU-bound (e.g., dataloader bottleneck, syncs).
+
+High CUDA kernel times and idle CPU → GPU-bound (compute or memory limit).
+
+3. How can you tell if a model is memory-bound or compute-bound using Nsight Compute?
+
+Answer:
+Look at the Roofline chart — if achieved FLOPs are far below the compute roof but close to the memory roof, the kernel is memory-bound.
+Alternatively, compare achieved occupancy, DRAM throughput, and SM utilization; high memory utilization with low FP throughput confirms memory-bound behavior.
+
+4. What causes GPU kernels to appear as many small green bars in Nsight Systems?
+
+Answer:
+That indicates many tiny kernel launches — usually due to unfused ops, small tensor sizes, or Python overhead between launches.
+Fix by using operator fusion (Torch Compile / TensorRT) or CUDA Graphs to reduce launch overhead.
+
+5. How can you detect CPU↔GPU synchronization overhead in PyTorch Profiler or Nsight Systems?
+
+Answer:
+You’ll see gaps in the GPU timeline where kernels aren’t executing, and CPU activities waiting on cudaMemcpy or implicit syncs.
+Excessive cudaDeviceSynchronize() or .item() calls often cause this.
+Use async data transfers (non_blocking=True) and pinned memory to minimize such stalls.
+
+6. What does “achieved occupancy” mean in Nsight Compute, and why might it be low?
+
+Answer:
+Achieved occupancy = ratio of active warps per SM to the hardware maximum.
+Low occupancy often results from high register pressure, shared memory overuse, or thread/block size mismatch — reducing the GPU’s ability to hide latency.
+Tuning block size or reducing register usage can improve occupancy.
+
+7. How do you profile a PyTorch model to generate a Chrome trace and interpret it?
+
+Answer:
+Use torch.profiler.profile(..., with_stack=True, on_trace_ready=torch.profiler.tensorboard_trace_handler("traces")).
+Then open the .json trace in Chrome → chrome://tracing.
+You can inspect per-op CUDA launches, overlaps, and gaps — showing kernel concurrency and data transfer timing.
+
+8. What are some key Nsight Compute metrics to check when analyzing a slow CUDA kernel?
+
+Answer:
+
+sm__throughput – shows ALU utilization.
+
+dram__throughput – shows memory bandwidth usage.
+
+warp_execution_efficiency – divergence within warps.
+
+achieved_occupancy – how many threads are active.
+
+gld_efficiency/gst_efficiency – memory coalescing efficiency.
+Together, they reveal whether a kernel is bottlenecked by compute, memory access, or warp divergence.
+
+9. In PyTorch Profiler, how do you differentiate between data loader bottlenecks and compute bottlenecks?
+
+Answer:
+Use record_shapes=True, profile_memory=True, with_stack=True.
+If CPU time (especially under DataLoader or copy_) dominates before GPU kernels launch, the model is input-pipeline-bound.
+Adding num_workers, prefetch_factor, or async data loading can fix it.
+
+10. When profiling inference, how do you detect and minimize kernel launch overhead?
+
+Answer:
+Kernel launch overhead appears as short, frequent GPU kernels separated by CPU idle gaps in Nsight Systems.
+To minimize:
+
+Use fused operators (Torch Inductor, TensorRT).
+
+Use CUDA Graph capture to remove per-launch overhead.
+
+Avoid running small batch sizes where kernel utilization is poor.
+
 ## Attention & Sequence Optimizations
 
 ### FlashAttention v1/v2, tiling & online softmax
